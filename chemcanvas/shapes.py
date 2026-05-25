@@ -280,14 +280,13 @@ class Ellipse(Shape):
 
 
 
-class Orbital(DrawableObject):
-    meta__undo_properties = ("type", "x", "y", "lobe_size", "rotation",
-             "layer", "color", "scale_val",)
+class p_Orbital(DrawableObject):
+    meta__undo_properties = ("x", "y", "lobe_size", "rotation", "paths",
+             "gradient_center", "gradient_size", "layer", "color", "scale_val",)
     meta__scalables = ("scale_val", "x", "y", "lobe_size")
-    types = ("p", "dxy", "dz2")
-    def __init__(self, type="p"):
+
+    def __init__(self):
         DrawableObject.__init__(self)
-        self.type = type
         self.x = 0 # center_x
         self.y = 0
         self.lobe_size = 24 # equals to bond length by default
@@ -299,6 +298,9 @@ class Orbital(DrawableObject):
         self._main_items = []
         self._focus_item = None
         self._selection_item = None
+        self.paths = []
+        self.gradient_center = None
+        self.gradient_size = None
 
     @property
     def pos(self):
@@ -309,9 +311,31 @@ class Orbital(DrawableObject):
 
     def set_rotation(self, angle):
         self.rotation = angle
+        self.paths = []
 
     def set_lobe_size(self, size):
         self.lobe_size = size
+        self.paths = []
+
+    def calc_path(self):
+        if self.paths:# already calculated
+            return
+        path = "30,100 15,100 0,48 0,34 0,15 6,0 30,0 54,0 60,15 60,34 60,48 45,100 30,100"
+        path = [tuple(map(int, coord.split(","))) for coord in path.split(" ")]
+        scale = self.lobe_size/100
+        points1 = [(self.x+(x-30)*scale, self.y+(y-100)*scale) for x,y in path]
+        points2 = [(x, 2*self.y-y) for x,y in points1]
+        self.gradient_center = (self.x-9*scale, self.y-65*scale)
+        self.gradient_size = 60*scale
+        if self.rotation:
+            tfm = geo.Transform()
+            tfm.translate(-self.x, -self.y)
+            tfm.rotate(self.rotation*PI/180)
+            tfm.translate(self.x, self.y)
+            points1 = tfm.transform_points(points1)
+            points2 = tfm.transform_points(points2)
+            self.gradient_center = tfm.transform(*self.gradient_center)
+        self.paths = [points1, points2]
 
     @property
     def chemistry_items(self):
@@ -344,7 +368,14 @@ class Orbital(DrawableObject):
         selected = bool(self._selection_item)
         self.clear_drawings()
 
-        self._main_items = getattr(self, "_draw_%s" % self.type)()
+        self.calc_path()
+        gradient = QRadialGradient(*self.gradient_center, self.gradient_size)
+        gradient.setColorAt(0.0, QColor("white"))
+        gradient.setColorAt(0.4, QColor("#aaaaaa"))
+        gradient.setColorAt(1.0, QColor("#aaaaaa").darker())
+        item1 = self.paper.addCubicBezier(self.paths[0], fill=gradient)
+        item2 = self.paper.addCubicBezier(self.paths[1], fill=(255,255,255))
+        self._main_items = [item1,item2]
         for item in self._main_items:
             self.paper.addFocusable(item, self)
             if self.layer==1:
@@ -357,78 +388,12 @@ class Orbital(DrawableObject):
         if selected:
             self.set_selected(True)
 
-    def _draw_s(self):
-        r = self.lobe_size * self.scale_val
-        rect = [self.x-r, self.y-r, self.x+r,self.y+r]
-        gradient = self.get_lobe_gradient()
-        return [self.paper.addEllipse(rect, 1*self.scale_val, fill=gradient)]
-
-    def _draw_p(self):
-        path = "30,100 15,100 0,48 0,34 0,15 6,0 30,0 54,0 60,15 60,34 60,48 45,100 30,100"
-        path = [tuple(map(int, coord.split(","))) for coord in path.split(" ")]
-        scale = self.lobe_size/100 * self.scale_val
-        items = []
-        gradient = self.get_lobe_gradient()
-        points = [[(self.x+(x-30)*scale, self.y+(y-100)*scale) for x,y in path]]*2
-        for i,pts in enumerate(points):
-            angle = self.rotation*PI/180 + i*PI
-            pts = [geo.rotate_point(*pt, self.x, self.y, angle) for pt in pts]
-            fill = (255,255,255) if i%2 else gradient
-            item = self.paper.addCubicBezier(pts, 1*self.scale_val, fill=fill)
-            items.append(item)
-        return items
-
-
-    def _draw_dxy(self):
-        path = "35,100 35,100 0,65 0,33 0,14 10,0 35,0 60,0 70,14 70,33 70,65 35,100 35,100"
-        path = [tuple(map(int, coord.split(","))) for coord in path.split(" ")]
-        scale = self.lobe_size/100 * self.scale_val
-        items = []
-        gradient = self.get_lobe_gradient()
-        points = [[(self.x+(x-35)*scale, self.y+(y-100)*scale) for x,y in path]]*4
-        for i,pts in enumerate(points):
-            angle = self.rotation*PI/180 + PI/4 + i*PI/2
-            pts = [geo.rotate_point(*pt, self.x, self.y, angle) for pt in pts]
-            fill = (255,255,255) if i%2 else gradient
-            item = self.paper.addCubicBezier(pts, 1*self.scale_val, fill=fill)
-            items.append(item)
-        return items
-
-    def _draw_dz2(self):
-        scale = self.lobe_size/100 * self.scale_val
-        lobe_path = "30,100 15,100 0,48 0,34 0,15 6,0 30,0 54,0 60,15 60,34 60,48 45,100 30,100"
-        lobe_path = [tuple(map(int, coord.split(","))) for coord in lobe_path.split(" ")]
-        lobe_pts = [(self.x+(x-30)*scale, self.y+(y-100)*scale) for x,y in lobe_path]
-        ring_path = "45,0 30,0 0,4 0,14 0,24 30,28 45,28 60,28 90,24 90,14 90,4 60,0 45,0"
-        ring_path = [tuple(map(int, coord.split(","))) for coord in ring_path.split(" ")]
-        ring_pts = [(self.x+(x-45)*scale, self.y+(y-14)*scale) for x,y in ring_path]
-        gradient = self.get_lobe_gradient()
-        points = [lobe_pts, ring_pts, lobe_pts]
-        items = []
-        for i,pts in enumerate(points):
-            angle = self.rotation*PI/180
-            if i==0:# first lobe will be downward
-                angle += PI
-            pts = [geo.rotate_point(*pt, self.x, self.y, angle) for pt in pts]
-            fill = (255,255,255) if i==1 else gradient
-            item = self.paper.addCubicBezier(pts, 1*self.scale_val, fill=fill)
-            items.append(item)
-        items.reverse()# because set_focus uses path of first item
-        return items
-
-    def get_lobe_gradient(self):
-        gradient = QRadialGradient(0.35, 0.35, 0.65)
-        gradient.setCoordinateMode(gradient.ObjectBoundingMode)
-        gradient.setColorAt(0.0, QColor("white"))
-        gradient.setColorAt(0.4, QColor("#aaaaaa"))
-        gradient.setColorAt(1.0, QColor("#aaaaaa").darker())
-        return gradient
 
     def set_focus(self, focus):
         if focus:
-            path = self._main_items[0].shape()
-            path.translate(self._main_items[0].scenePos())
-            self._focus_item = self.paper.addPath(path, fill=Settings.focus_color)
+            self.calc_path()
+            path = self.paths[0] + self.paths[1][1:]
+            self._focus_item = self.paper.addCubicBezier(path, fill=Settings.focus_color)
             if self.layer==1:
                 self.paper.toTopLayer(self._focus_item)
             else:
@@ -439,9 +404,9 @@ class Orbital(DrawableObject):
 
     def set_selected(self, select):
         if select:
-            path = self._main_items[0].shape()
-            path.translate(self._main_items[0].scenePos())
-            self._selection_item = self.paper.addPath(path, fill=Settings.selection_color)
+            self.calc_path()
+            path = self.paths[0] + self.paths[1][1:]
+            self._selection_item = self.paper.addCubicBezier(path, fill=Settings.selection_color)
             if self.layer==1:
                 self.paper.toTopLayer(self._selection_item)
             else:
@@ -454,6 +419,7 @@ class Orbital(DrawableObject):
 
     def move_by(self, dx, dy):
         self.x, self.y = self.x+dx, self.y+dy
+        self.paths = []
 
     def scale(self, scale):
         self.scale_val *= scale
